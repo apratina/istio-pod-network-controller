@@ -1,83 +1,33 @@
-.DEFAULT_GOAL	:= build
+default: build
 
-#------------------------------------------------------------------------------
-# Variables
-#------------------------------------------------------------------------------
+# login to artifactory using artifactory credentials
+login:
+		@docker login -u $(ARTIFACTORY_USER) -p $(ARTIFACTORY_API_TOKEN) docker-asr-release.dr.corp.adobe.com
 
-.PHONY: push
-push: docker
-	@docker push quay.io/raffaelespazzoli/istio-pod-network-controller:latest
+pre-deploy-build:
+		@echo "nothing is defined in pre-deploy-build step"
 
-.PHONY: docker
-docker: build
-	@echo "--> building docker image"
-	@docker build -f Dockerfile -t quay.io/raffaelespazzoli/istio-pod-network-controller:latest .
-
-.PHONY: build
-build: vendor
-	@echo "---> building go binary"
-	@CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/istio-pod-network-controller -v cmd/istio-pod-network-controller/main.go
-
-.PHONY: clean
-clean:
-	@echo "--> cleaning compiled objects and binaries"
-	@go clean
-
-.PHONY: check
-check: vet
-
-.PHONY: vet
-vet: tools.govet
-	@echo "--> checking code correctness with 'go vet' tool"
-	@go vet ./cmd/...
-
-#------------------
-#-- dependencies
-#------------------
-.PHONY: depend.update depend.install
-
-depend.update: tools.dep
-	@echo "--> updating dependencies from Gopkg.yaml"
-	@dep ensure update
-
-depend.install: tools.dep
-	@echo "--> installing dependencies from Gopkg.lock "
-	@dep ensure
+post-deploy-build:
+		@echo "nothing is defined in post-deploy-build step"
 
 vendor: tools.dep
-	@echo "--> installing dependencies from Gopkg.lock "
-	@dep ensure -vendor-only
+		@dep ensure -vendor-only
 
-$(BINDIR):
-	@mkdir -p $(BINDIR)
+# builds the buildtime and runtime image
+build: login
+		@CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ./bin/istio-pod-network-controller -v cmd/istio-pod-network-controller/main.go
+		@chmod 755 ./bin/istio-pod-network-controller
+		@docker build -t istio-pod-network-controller .
 
-#---------------
-#-- tools
-#---------------
-.PHONY: tools tools.dep tools.goimports tools.golint tools.govet
+# push image
+push: build
+		@docker tag istio-pod-network-controller docker-asr-release.dr-uw2.adobeitc.com/test/istio-pod-network-controller:latest
+		@docker push docker-asr-release.dr-uw2.adobeitc.com/test/istio-pod-network-controller:latest
 
-tools: tools.dep tools.goimports tools.golint tools.govet
+# deploy vesta daemonset
+deploy-ew:
+		@kubectl apply -f k8s.yaml
 
-tools.goimports:
-	@command -v goimports >/dev/null ; if [ $$? -ne 0 ]; then \
-		echo "--> installing goimports"; \
-		go get golang.org/x/tools/cmd/goimports; \
-	fi
-
-tools.govet:
-	@go tool vet 2>/dev/null ; if [ $$? -eq 3 ]; then \
-		echo "--> installing govet"; \
-		go get golang.org/x/tools/cmd/vet; \
-	fi
-
-tools.golint:
-	@command -v golint >/dev/null ; if [ $$? -ne 0 ]; then \
-		echo "--> installing golint"; \
-		go get -u golang.org/x/lint/golint; \
-	fi
-
-tools.dep:
-	@command -v dep >/dev/null ; if [ $$? -ne 0 ]; then \
-		echo "--> installing dep"; \
-		curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh; \
-	fi
+# delete vesta daemonset
+delete-ew:
+		@kubectl delete -f k8s.yaml

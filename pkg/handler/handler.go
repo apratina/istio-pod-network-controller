@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"os/exec"
 	"strings"
 	"time"
@@ -63,21 +67,48 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 	switch o := event.Object.(type) {
 	case *corev1.Pod:
 
-		// Check to see if pod is running on current node
-		if h.nodeName == o.Spec.NodeName {
-			if filterPod(o) {
-				err := h.managePod(ctx, o)
-				if err != nil {
-					log.Errorf("Failed to process pod : %v", err)
-					return err
-				}
-				err = markPodAsInitialized(o)
-				if err != nil {
-					log.Errorf("Failed to process pod : %v", err)
-					return err
-				}
-			}
+		// TODO: send only the pod that is annotated
+
+		// if TargetedPodAnnotationValue == o.ObjectMeta.Annotations[TargetedPodAnnotation] {
+
+		requestByte, _ := json.Marshal(o)
+		endpoint := "http://" + o.Spec.NodeName + ":31179/post"
+		resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer(requestByte))
+		if err != nil {
+			log.Errorf("Failed to send post request to the endpoint %s : %v", endpoint, err)
+			return err
 		}
+
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Errorf("Failed to read json response body : %v", err)
+			return err
+		}
+
+		log.Infof("Endpoint: %s, Sent request body: %v, Response body %s", endpoint, o, string(body))
+
+		// }
+
+		// Check to see if pod is running on current node
+		// if h.nodeName == o.Spec.NodeName {
+		// podnsname, _ := cache.MetaNamespaceKeyFunc(o)
+		// log.Infof("before: " + o.Spec.NodeName + " " + podnsname)
+		// if filterPod(o) {
+		// 	log.Infof("after: " + o.Spec.NodeName)
+		// 	err := h.managePod(ctx, o)
+		// 	if err != nil {
+		// 		log.Errorf("Failed to process pod : %v", err)
+		// 		return err
+		// 	}
+		// 	err = markPodAsInitialized(o)
+		// 	if err != nil {
+		// 		log.Errorf("Failed to process pod : %v", err)
+		// 		return err
+		// 	}
+		// }
+		// }
 	}
 	return nil
 }
@@ -161,6 +192,8 @@ func (h *Handler) getPidDocker(ctx context.Context, pod *corev1.Pod) (string, er
 func filterPod(pod *corev1.Pod) bool {
 
 	podNamespaceName, _ := cache.MetaNamespaceKeyFunc(pod)
+
+	log.Infof("Pod annotation %s", pod.ObjectMeta.Annotations[TargetedPodAnnotation])
 
 	// filter by state
 	if pod.Status.Phase != "Running" && pod.Status.Phase != "Pending" {

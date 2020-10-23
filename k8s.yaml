@@ -1,0 +1,145 @@
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: ew-psp
+  namespace: ethos-mesh
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+spec:
+  privileged: true
+  allowPrivilegeEscalation: true
+  allowedCapabilities:
+  - '*'
+  volumes:
+  - '*'
+  hostNetwork: true
+  hostPorts:
+  - min: 0
+    max: 65535
+  hostIPC: true
+  hostPID: true
+  runAsUser:
+    rule: 'RunAsAny'
+  seLinux:
+    rule: 'RunAsAny'
+  supplementalGroups:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ew-role
+rules:
+- apiGroups:
+  - ""
+  attributeRestrictions: null
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  attributeRestrictions: null
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - extensions
+  resourceNames:
+  - ew-psp
+  resources:
+  - podsecuritypolicies
+  verbs:
+  - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ew-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ew-role
+subjects:
+  - kind: ServiceAccount
+    name: ew-sa
+    namespace: ethos-mesh
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ew-sa
+  namespace: ethos-mesh
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: ew
+  namespace: ethos-mesh
+  labels:
+    app: ew
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: ew
+  template:
+    metadata:
+      labels:
+        name: ew
+    spec:
+      # TODO: identify secure way to allow host port
+      serviceAccountName: ew-sa
+      hostPID: true
+      containers:
+      - env:
+        - name: LOG_LEVEL
+          value: info
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        args:
+        - 'run'
+        - '--container-runtime'
+        - "crio"
+        - 'istio-include-outbound-ip-ranges'
+        - "*"
+        image: docker-asr-release.dr-uw2.adobeitc.com/test/istio-pod-network-controller:latest
+        imagePullPolicy: Always
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 200Mi
+        name: ew
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: crio
+          mountPath: /var/run/crio/crio.sock
+        - name: runc-root
+          mountPath: /run/runc
+      volumes:
+      - name: crio
+        hostPath:
+          path: /var/run/crio/crio.sock
+          type: Socket
+      - name: runc-root
+        hostPath:
+          path: /run/runc
+          type: Directory
+      # TODO: piggybacking from janus
+      imagePullSecrets:
+        - name: asr-docker
+---
